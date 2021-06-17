@@ -9,15 +9,15 @@ import (
 
 // node represents an in-memory, deserialized page.
 type node struct {
-	bucket     *Bucket
-	isLeaf     bool
+	bucket     *Bucket	//是更上层的数据结构，类似于数据中的表的概念，一个bucket中包含了很多node
+	isLeaf     bool		//区分树枝和叶子节点
 	unbalanced bool
 	spilled    bool
-	key        []byte
-	pgid       pgid
-	parent     *node
-	children   nodes
-	inodes     inodes
+	key        []byte	//该节点中最小的key
+	pgid       pgid		//page id
+	parent     *node	//父节点
+	children   nodes	//子节点
+	inodes     inodes	//node中真正存放数据的地方, 存储k-v的结构
 }
 
 // root returns the top-level node this node is attached to.
@@ -595,10 +595,10 @@ func (s nodes) Less(i, j int) bool { return bytes.Compare(s[i].inodes[0].key, s[
 // It can be used to point to elements in a page or point
 // to an element which hasn't been added to a page yet.
 type inode struct {
-	flags uint32
-	pgid  pgid
-	key   []byte
-	value []byte
+	flags uint32	//仅叶子节点使用.存放数据内容标识,为bucket或普通数据中的一种
+	pgid  pgid		//仅树枝节点使用. 存放节点的page id
+	key   []byte	//树枝节点和叶子节点公用
+	value []byte	//仅叶子节点使用,存放普通数据或bucket
 }
 
 type inodes []inode

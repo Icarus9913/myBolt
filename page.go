@@ -15,24 +15,29 @@ const branchPageElementSize = int(unsafe.Sizeof(branchPageElement{}))
 const leafPageElementSize = int(unsafe.Sizeof(leafPageElement{}))
 
 const (
-	branchPageFlag   = 0x01
-	leafPageFlag     = 0x02
-	metaPageFlag     = 0x04
-	freelistPageFlag = 0x10
+	branchPageFlag   = 0x01		//1
+	leafPageFlag     = 0x02		//2
+	metaPageFlag     = 0x04		//4
+	freelistPageFlag = 0x10		//16
 )
 
 const (
-	bucketLeafFlag = 0x01
+	bucketLeafFlag = 0x01		//1
 )
 
 type pgid uint64
 
+/*
+	page由两部分组成,
+		1是page header: id,flags,count,overflow;
+		2是page data: *ptr
+*/
 type page struct {
-	id       pgid
-	flags    uint16
-	count    uint16
-	overflow uint32
-	ptr      uintptr
+	id       pgid		//page id
+	flags    uint16		//区分page类型的标识,可以为元数据,空闲列表,树枝,叶子 这四种之一
+	count    uint16		//记录page中的元素个数
+	overflow uint32		//当遇到体积巨大、单个 page 无法装下的数据时，会溢出到其它 pages，overflow 记录溢出数
+	ptr      uintptr	//指向 page 数据的内存地址，该字段仅在内存中存在,并不落盘. 可指向meta,branch,leaf,freelist
 }
 
 // typ returns a human readable page type string used for debugging.
@@ -94,10 +99,11 @@ func (s pages) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 func (s pages) Less(i, j int) bool { return s[i].id < s[j].id }
 
 // branchPageElement represents a node on a branch page.
+// 树分支
 type branchPageElement struct {
-	pos   uint32
-	ksize uint32
-	pgid  pgid
+	pos   uint32	//键的位置,即位移			key的位置
+	ksize uint32	//键的长度				key的大小
+	pgid  pgid		//子节点所在page的id		指向下层pageid
 }
 
 // key returns a byte slice of the node key.
@@ -107,11 +113,12 @@ func (n *branchPageElement) key() []byte {
 }
 
 // leafPageElement represents a node on a leaf page.
+// 叶子节点
 type leafPageElement struct {
-	flags uint32
-	pos   uint32
-	ksize uint32
-	vsize uint32
+	flags uint32	//保留字段，同时方便对齐	/内容标识,可以为普通数据(0)或bucket(1)两者中的任一种
+	pos   uint32	//键值的位置，即位移		key的位置
+	ksize uint32	//键的长度				key的大小
+	vsize uint32	//值的长度				value的大小
 }
 
 // key returns a byte slice of the node key.

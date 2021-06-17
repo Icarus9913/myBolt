@@ -1433,10 +1433,10 @@ const maxAllocSize = 0xFFFFFFF
 
 // DO NOT EDIT. Copied from the "bolt" package.
 const (
-	branchPageFlag   = 0x01
-	leafPageFlag     = 0x02
-	metaPageFlag     = 0x04
-	freelistPageFlag = 0x10
+	branchPageFlag   = 0x01		//树枝节点页
+	leafPageFlag     = 0x02		//叶子节点页
+	metaPageFlag     = 0x04		//元数据页
+	freelistPageFlag = 0x10		//空闲列表页
 )
 
 // DO NOT EDIT. Copied from the "bolt" package.
@@ -1449,16 +1449,17 @@ type pgid uint64
 type txid uint64
 
 // DO NOT EDIT. Copied from the "bolt" package.
+// meta page是boltDB实例元数据所在处,它告诉人们它是什么以及如何理解整个数据库文件
 type meta struct {
-	magic    uint32
-	version  uint32
-	pageSize uint32
-	flags    uint32
-	root     bucket
-	freelist pgid
-	pgid     pgid
-	txid     txid
-	checksum uint64
+	magic    uint32		//一个生成好的 32 位随机数，用来确定该文件是一个 boltDB 实例的数据库文件（另一个文件起始位置拥有相同数据的可能性极低）
+	version  uint32		//表明该文件所属的 boltDB 版本，便于日后做兼容与迁移
+	pageSize uint32		//页大小,根据系统获得,一般为4K
+	flags    uint32		//保留字段,未使用?  (表示为metadata)
+	root     bucket		//boltDB 实例的所有索引及数据的根结点	起始时从3开始
+	freelist pgid		//boltDB 在数据删除过程中可能出现剩余磁盘空间，这些空间会被分块记录在 freelist 中备用	起始时从2开始
+	pgid     pgid		//下一个将要分配的 page id (已分配的所有 pages 的最大 id 加 1)
+	txid     txid		//下一个将要分配的事务 id。事务 id 单调递增，是每个事务发生的逻辑时间，它在实现 boltDB 的并发访问控制中起到重要作用
+	checksum uint64		//用于确认 meta page 数据本身的完整性，保证读取的就是上一次正确写入的数据
 }
 
 // DO NOT EDIT. Copied from the "bolt" package.
@@ -1468,12 +1469,17 @@ type bucket struct {
 }
 
 // DO NOT EDIT. Copied from the "bolt" package.
+/*
+	page由两部分组成,
+		1是page header: id,flags,count,overflow;
+		2是page data: *ptr
+*/
 type page struct {
-	id       pgid
-	flags    uint16
-	count    uint16
-	overflow uint32
-	ptr      uintptr
+	id       pgid		//page id
+	flags    uint16		//区分page类型的标识,可以为元数据,空闲列表,树枝,叶子 这四种之一
+	count    uint16		//记录page中的元素个数
+	overflow uint32		//当遇到体积巨大、单个 page 无法装下的数据时，会溢出到其它 pages，overflow 记录溢出数
+	ptr      uintptr	//指向 page 数据的内存地址，该字段仅在内存中存在,并不落盘. 可指向meta,branch,leaf,freelist
 }
 
 // DO NOT EDIT. Copied from the "bolt" package.
@@ -1502,10 +1508,11 @@ func (p *page) branchPageElement(index uint16) *branchPageElement {
 }
 
 // DO NOT EDIT. Copied from the "bolt" package.
+// 树分支
 type branchPageElement struct {
-	pos   uint32
-	ksize uint32
-	pgid  pgid
+	pos   uint32	//键的位置,即位移			key的位置
+	ksize uint32	//键的长度				key的大小
+	pgid  pgid		//子节点所在page的id		指向下层pageid
 }
 
 // DO NOT EDIT. Copied from the "bolt" package.
@@ -1515,11 +1522,12 @@ func (n *branchPageElement) key() []byte {
 }
 
 // DO NOT EDIT. Copied from the "bolt" package.
+// 叶子节点
 type leafPageElement struct {
-	flags uint32
-	pos   uint32
-	ksize uint32
-	vsize uint32
+	flags uint32	//保留字段，同时方便对齐	/内容标识,可以为普通数据(0)或bucket(1)两者中的任一种
+	pos   uint32	//键值的位置，即位移		key的位置
+	ksize uint32	//键的长度				key的大小
+	vsize uint32	//值的长度				value的大小
 }
 
 // DO NOT EDIT. Copied from the "bolt" package.
