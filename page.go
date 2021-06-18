@@ -7,7 +7,7 @@ import (
 	"unsafe"
 )
 
-const pageHeaderSize = int(unsafe.Offsetof(((*page)(nil)).ptr))
+const pageHeaderSize = int(unsafe.Offsetof(((*page)(nil)).ptr))		//复习一下内存对齐,这里是8+2+2+4=16个字节,表示在ptr之前的首部header占16个字节
 
 const minKeysPerPage = 2
 
