@@ -21,6 +21,7 @@ type txid uint64
 // them. Pages can not be reclaimed by the writer until no more transactions
 // are using them. A long running read transaction can cause the database to
 // quickly grow.
+// Tx 主要封装了读事务和写事务。其中通过writable来区分是读事务还是写事务
 type Tx struct {
 	writable       bool
 	managed        bool
@@ -29,7 +30,7 @@ type Tx struct {
 	root           Bucket
 	pages          map[pgid]*page
 	stats          TxStats
-	commitHandlers []func()
+	commitHandlers []func()		// 提交时执行的动作
 
 	// WriteFlag specifies the flag for write-related methods like WriteTo().
 	// Tx opens the database file with the specified flag to copy the data.
@@ -46,6 +47,7 @@ func (tx *Tx) init(db *DB) {
 	tx.pages = nil
 
 	// Copy the meta page since it can be changed by the writer.
+	// 拷贝元信息
 	tx.meta = &meta{}
 	db.meta().copy(tx.meta)
 

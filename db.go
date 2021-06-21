@@ -344,8 +344,13 @@ func (db *DB) init() error {
 	// Set the page size to the OS page size.
 	db.pageSize = os.Getpagesize()
 
-	// Create two meta pages on a buffer.
+	/*
+		0,1 是metaPage
+		2 	是freelistPage
+		3	是leafPage
+	*/
 	buf := make([]byte, db.pageSize*4)
+	// Create two meta pages on a buffer.
 	for i := 0; i < 2; i++ {
 		p := db.pageInBuffer(buf[:], pgid(i))
 		p.id = pgid(i)
@@ -376,9 +381,11 @@ func (db *DB) init() error {
 	p.count = 0
 
 	// Write the buffer to our data file.
+	// 将buffer写入我们打开的db文件里去,其中这个writeAt是 func (*File) WriteAt
 	if _, err := db.ops.writeAt(buf, 0); err != nil {
 		return err
 	}
+	// 立即刷入磁盘(实际IO操作),上面的writeAt只是将数据存入缓冲区了,当缓冲区满了才会输出进行实际IO操作
 	if err := fdatasync(db); err != nil {
 		return err
 	}

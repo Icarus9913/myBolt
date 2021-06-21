@@ -15,10 +15,10 @@ const branchPageElementSize = int(unsafe.Sizeof(branchPageElement{}))
 const leafPageElementSize = int(unsafe.Sizeof(leafPageElement{}))
 
 const (
-	branchPageFlag   = 0x01		//1
-	leafPageFlag     = 0x02		//2
-	metaPageFlag     = 0x04		//4
-	freelistPageFlag = 0x10		//16
+	branchPageFlag   = 0x01		//1,树枝节点页
+	leafPageFlag     = 0x02		//2,叶子节点页
+	metaPageFlag     = 0x04		//4,元数据页
+	freelistPageFlag = 0x10		//16,空闲列表页
 )
 
 const (
@@ -108,7 +108,7 @@ type branchPageElement struct {
 
 // key returns a byte slice of the node key.
 func (n *branchPageElement) key() []byte {
-	buf := (*[maxAllocSize]byte)(unsafe.Pointer(n))
+	buf := (*[maxAllocSize]byte)(unsafe.Pointer(n))		// buf 是元素头起始地址
 	return (*[maxAllocSize]byte)(unsafe.Pointer(&buf[n.pos]))[:n.ksize]
 }
 

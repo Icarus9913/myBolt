@@ -1433,10 +1433,10 @@ const maxAllocSize = 0xFFFFFFF
 
 // DO NOT EDIT. Copied from the "bolt" package.
 const (
-	branchPageFlag   = 0x01		//树枝节点页
-	leafPageFlag     = 0x02		//叶子节点页
-	metaPageFlag     = 0x04		//元数据页
-	freelistPageFlag = 0x10		//空闲列表页
+	branchPageFlag   = 0x01		//1,树枝节点页
+	leafPageFlag     = 0x02		//2,叶子节点页
+	metaPageFlag     = 0x04		//4,元数据页
+	freelistPageFlag = 0x10		//16,空闲列表页
 )
 
 // DO NOT EDIT. Copied from the "bolt" package.
@@ -1455,7 +1455,7 @@ type meta struct {
 	version  uint32		//表明该文件所属的 boltDB 版本，便于日后做兼容与迁移
 	pageSize uint32		//页大小,根据系统获得,一般为4K
 	flags    uint32		//保留字段,未使用?  (表示为metadata)
-	root     bucket		//boltDB 实例的所有索引及数据的根结点	起始时从3开始
+	root     bucket		//boltDB 实例的所有索引及数据的根结点	起始时从3开始	各个子bucket根所组成的树
 	freelist pgid		//boltDB 在数据删除过程中可能出现剩余磁盘空间，这些空间会被分块记录在 freelist 中备用	起始时从2开始
 	pgid     pgid		//下一个将要分配的 page id (已分配的所有 pages 的最大 id 加 1)
 	txid     txid		//下一个将要分配的事务 id。事务 id 单调递增，是每个事务发生的逻辑时间，它在实现 boltDB 的并发访问控制中起到重要作用
@@ -1463,6 +1463,7 @@ type meta struct {
 }
 
 // DO NOT EDIT. Copied from the "bolt" package.
+// Bucket Header
 type bucket struct {
 	root     pgid
 	sequence uint64

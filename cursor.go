@@ -16,8 +16,8 @@ import (
 // and return unexpected keys and/or values. You must reposition your cursor
 // after mutating data.
 type Cursor struct {
-	bucket *Bucket
-	stack  []elemRef
+	bucket *Bucket		//使用该句柄来进行node的加载
+	stack  []elemRef	//保留路径,方便回溯
 }
 
 // Bucket returns the bucket that this cursor was created from.
@@ -28,6 +28,12 @@ func (c *Cursor) Bucket() *Bucket {
 // First moves the cursor to the first item in the bucket and returns its key and value.
 // If the bucket is empty then a nil key and value are returned.
 // The returned key and value are only valid for the life of the transaction.
+/*
+	1. 将根节点放入 stack 中
+	2. 调用 c.first() 定位到根的第一个叶子节点
+	3. 如果该节点为空，则调用 c.next() 找到下一个非空叶子节点
+	4. 返回其该叶子节点第一个元素
+*/
 func (c *Cursor) First() (key []byte, value []byte) {
 	_assert(c.bucket.tx.db != nil, "tx closed")
 	c.stack = c.stack[:0]
@@ -52,6 +58,11 @@ func (c *Cursor) First() (key []byte, value []byte) {
 // Last moves the cursor to the last item in the bucket and returns its key and value.
 // If the bucket is empty then a nil key and value are returned.
 // The returned key and value are only valid for the life of the transaction.
+/*
+	1. 将根节点放入 stack 中
+	2. 调用 c.last() 定位到根的最后一个叶子节点
+	3. 返回其最后一个元素，不存在则返回空
+*/
 func (c *Cursor) Last() (key []byte, value []byte) {
 	_assert(c.bucket.tx.db != nil, "tx closed")
 	c.stack = c.stack[:0]
@@ -70,6 +81,7 @@ func (c *Cursor) Last() (key []byte, value []byte) {
 // Next moves the cursor to the next item in the bucket and returns its key and value.
 // If the cursor is at the end of the bucket then a nil key and value are returned.
 // The returned key and value are only valid for the life of the transaction.
+// 1. 直接调用 c.next 即可
 func (c *Cursor) Next() (key []byte, value []byte) {
 	_assert(c.bucket.tx.db != nil, "tx closed")
 	k, v, flags := c.next()
@@ -82,6 +94,12 @@ func (c *Cursor) Next() (key []byte, value []byte) {
 // Prev moves the cursor to the previous item in the bucket and returns its key and value.
 // If the cursor is at the beginning of the bucket then a nil key and value are returned.
 // The returned key and value are only valid for the life of the transaction.
+/*
+	1. 遍历 stack，回溯到第一个有前驱元素的分支节点
+	2. 将节点的 ref.index--
+	3. 调用 c.last()，定位到该子树的最后一个叶子节点
+	4. 返回其最后一个元素
+*/
 func (c *Cursor) Prev() (key []byte, value []byte) {
 	_assert(c.bucket.tx.db != nil, "tx closed")
 
@@ -114,6 +132,10 @@ func (c *Cursor) Prev() (key []byte, value []byte) {
 // If the key does not exist then the next key is used. If no keys
 // follow, a nil key is returned.
 // The returned key and value are only valid for the life of the transaction.
+/*
+	1. 调用 c.seek()，找到第一个 >= key 的节点中元素。
+	2. 如果 key 正好落在两个叶子节点中间，调用 c.next() 找到下一个非空节点
+*/
 func (c *Cursor) Seek(seek []byte) (key []byte, value []byte) {
 	k, v, flags := c.seek(seek)
 
@@ -151,6 +173,13 @@ func (c *Cursor) Delete() error {
 
 // seek moves the cursor to a given key and returns it.
 // If the key does not exist then the next key is used.
+/*
+ 借助 search，查询 key 对应的 value
+ 如果 key 不存在，则返回待插入位置的 kv 对：
+	1. ref.index < ref.node.count() 时，则返回第一个比给定 key 大的 kv
+	2. ref.index == ref.node.count() 时，则返回 nil
+ 上层 Seek 需要处理第二种情况。
+*/
 func (c *Cursor) seek(seek []byte) (key []byte, value []byte, flags uint32) {
 	_assert(c.bucket.tx.db != nil, "tx closed")
 
@@ -169,6 +198,7 @@ func (c *Cursor) seek(seek []byte) (key []byte, value []byte, flags uint32) {
 }
 
 // first moves the cursor to the first leaf element under the last page in the stack.
+// 移动 cursor 到以栈顶元素为根的子树中最左边的叶子节点
 func (c *Cursor) first() {
 	for {
 		// Exit when we hit a leaf page.
@@ -190,6 +220,7 @@ func (c *Cursor) first() {
 }
 
 // last moves the cursor to the last leaf element under the last page in the stack.
+// 移动 cursor 到以栈顶元素为根的子树中最右边的叶子节点
 func (c *Cursor) last() {
 	for {
 		// Exit when we hit a leaf page.
@@ -215,6 +246,12 @@ func (c *Cursor) last() {
 
 // next moves to the next leaf element and returns the key and value.
 // If the cursor is at the last leaf element then it stays there and returns nil.
+/*
+ 移动 cursor 到下一个叶子元素
+	1. 如果当前叶子节点后面还有元素，则直接返回
+	2. 否则需要借助保存的路径找到下一个非空叶子节点
+	3. 如果当前已经指向最后一个叶子节点的最后一个元素，则返回 nil
+*/
 func (c *Cursor) next() (key []byte, value []byte, flags uint32) {
 	for {
 		// Attempt to move over one element until we're successful.
@@ -250,6 +287,7 @@ func (c *Cursor) next() (key []byte, value []byte, flags uint32) {
 }
 
 // search recursively performs a binary search against a given page/node until it finds a given key.
+// 尾递归,查询key所在的node,并且在cursor中记下路径
 func (c *Cursor) search(key []byte, pgid pgid) {
 	p, n := c.bucket.pageNode(pgid)
 	if p != nil && (p.flags&(branchPageFlag|leafPageFlag)) == 0 {
