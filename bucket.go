@@ -523,16 +523,19 @@ func (b *Bucket) _forEachPageNode(pgid pgid, depth int, fn func(*page, *node, in
 }
 
 // spill writes all the nodes for this bucket to dirty pages.
+// spill 将尺寸大于一个节点的page拆分,并将调整后的节点写入脏页
 func (b *Bucket) spill() error {
 	// Spill all child buckets first.
 	for name, child := range b.buckets {
 		// If the child bucket is small enough and it has no child buckets then
 		// write it inline into the parent bucket's page. Otherwise spill it
 		// like a normal bucket and make the parent value a pointer to the page.
+		//如果子bucket可以内嵌,则将其所有数据序列化后内嵌到父bucket相应叶子节点
 		var value []byte
 		if child.inlineable() {
 			child.free()
 			value = child.write()
+			// 否则,先调整子bucket,然后将其根节点page id作为值写入父bucket相应叶子节点
 		} else {
 			if err := child.spill(); err != nil {
 				return err
@@ -545,6 +548,7 @@ func (b *Bucket) spill() error {
 		}
 
 		// Skip writing the bucket if there are no materialized nodes.
+		// 如果该子bucket没有缓存任何node(说明没有数据变动),则直接跳过.
 		if child.rootNode == nil {
 			continue
 		}
@@ -562,17 +566,20 @@ func (b *Bucket) spill() error {
 	}
 
 	// Ignore if there's not a materialized root node.
+	// 如果该bucket没有缓存任何node(说明没有数据变动),则终止调整
 	if b.rootNode == nil {
 		return nil
 	}
 
 	// Spill nodes.
+	// 调整本bucket
 	if err := b.rootNode.spill(); err != nil {
 		return err
 	}
 	b.rootNode = b.rootNode.root()
 
 	// Update the root node for this bucket.
+	// 由于调整会增量写,造成本bucket根节点引用变更,因此需要更新b.root
 	if b.rootNode.pgid >= b.tx.meta.pgid {
 		panic(fmt.Sprintf("pgid (%d) above high water mark (%d)", b.rootNode.pgid, b.tx.meta.pgid))
 	}
@@ -631,15 +638,19 @@ func (b *Bucket) write() []byte {
 
 // rebalance attempts to balance all nodes.
 func (b *Bucket) rebalance() {
+	// 对所有缓存的node进行调整
 	for _, n := range b.nodes {
 		n.rebalance()
 	}
+
+	//对所有子bucket进行调整
 	for _, child := range b.buckets {
 		child.rebalance()
 	}
 }
 
 // node creates a node from a page and associates it with a given parent.
+// 根据pgid创建一个node
 func (b *Bucket) node(pgid pgid, parent *node) *node {
 	_assert(b.nodes != nil, "nodes map expected")
 
@@ -657,7 +668,10 @@ func (b *Bucket) node(pgid pgid, parent *node) *node {
 	}
 
 	// Use the inline page if this is an inline bucket.
+	// 如果第二次进来, b.page不为空
+	// 此处的pgid和b.page只会有一个是有值的
 	var p = b.page
+	// 说明不是内联桶
 	if p == nil {
 		p = b.tx.page(pgid)
 	}

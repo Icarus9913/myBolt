@@ -307,6 +307,7 @@ func (db *DB) munmap() error {
 // Returns an error if the new mmap size is greater than the max allowed.
 func (db *DB) mmapSize(size int) (int, error) {
 	// Double the size from 32KB until 1GB.
+	// 1<<15的单位是byte,是32KB. 所以 1<<30 就是1GB
 	for i := uint(15); i <= 30; i++ {
 		if size <= 1<<i {
 			return 1 << i, nil
@@ -319,6 +320,7 @@ func (db *DB) mmapSize(size int) (int, error) {
 	}
 
 	// If larger than 1GB then grow by 1GB at a time.
+	// 对齐到 maxMmapStep=1G
 	sz := int64(size)
 	if remainder := sz % int64(maxMmapStep); remainder > 0 {
 		sz += int64(maxMmapStep) - remainder
@@ -326,12 +328,14 @@ func (db *DB) mmapSize(size int) (int, error) {
 
 	// Ensure that the mmap size is a multiple of the page size.
 	// This should always be true since we're incrementing in MBs.
+	// 对齐到db.pageSize
 	pageSize := int64(db.pageSize)
 	if (sz % pageSize) != 0 {
 		sz = ((sz / pageSize) + 1) * pageSize
 	}
 
 	// If we've exceeded the max size then only grow up to the max size.
+	// 不能超过maxMapSize
 	if sz > maxMapSize {
 		sz = maxMapSize
 	}
@@ -974,16 +978,17 @@ type Info struct {
 	PageSize int
 }
 
+// meta page是boltDB实例元数据所在处,它告诉人们它是什么以及如何理解整个数据库文件
 type meta struct {
-	magic    uint32
-	version  uint32
-	pageSize uint32
-	flags    uint32
-	root     bucket
-	freelist pgid
-	pgid     pgid
-	txid     txid
-	checksum uint64
+	magic    uint32		//一个生成好的 32 位随机数，用来确定该文件是一个 boltDB 实例的数据库文件（另一个文件起始位置拥有相同数据的可能性极低）
+	version  uint32		//表明该文件所属的 boltDB 版本，便于日后做兼容与迁移
+	pageSize uint32		//页大小,根据系统获得,一般为4K
+	flags    uint32		//保留字段,未使用?  (表示为metadata)
+	root     bucket		//boltDB 实例的所有索引及数据的根结点	起始时从3开始	各个子bucket根所组成的树
+	freelist pgid		//boltDB 在数据删除过程中可能出现剩余磁盘空间，这些空间会被分块记录在 freelist 中备用	起始时从2开始
+	pgid     pgid		//下一个将要分配的 page id (已分配的所有 pages 的最大 id 加 1)
+	txid     txid		//下一个将要分配的事务 id。事务 id 单调递增，是每个事务发生的逻辑时间，它在实现 boltDB 的并发访问控制中起到重要作用
+	checksum uint64		//用于确认 meta page 数据本身的完整性，保证读取的就是上一次正确写入的数据
 }
 
 // validate checks the marker bytes and version of the meta page to ensure it matches this binary.

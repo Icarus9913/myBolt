@@ -8,16 +8,18 @@ import (
 )
 
 // node represents an in-memory, deserialized page.
+// node表示内存中一个反序列化后的page
 type node struct {
 	bucket     *Bucket	//是更上层的数据结构，类似于数据中的表的概念，一个bucket中包含了很多node
 	isLeaf     bool		//区分树枝和叶子节点
-	unbalanced bool
-	spilled    bool
-	key        []byte	//该节点中最小的key
+	unbalanced bool		//是否需要进行合并
+	spilled    bool		//是否需要进行拆分和落盘
+	key        []byte	//该节点中第一个元素key
 	pgid       pgid		//page id
-	parent     *node	//父节点
-	children   nodes	//子节点
-	inodes     inodes	//node中真正存放数据的地方, 存储k-v的结构
+	parent     *node	//父节点指针
+	children   nodes	//子节点指针(只包含加载到内存中的部分孩子)
+	inodes     inodes	//node中真正存放数据的地方,所存元素的元信息,
+						//对于分支节点是key+pgid;对于叶子节点是kv数组
 }
 
 // root returns the top-level node this node is attached to.
@@ -70,6 +72,7 @@ func (n *node) pageElementSize() int {
 }
 
 // childAt returns the child node at a given index.
+// 只有树枝(分支)节点才有孩子
 func (n *node) childAt(index int) *node {
 	if n.isLeaf {
 		panic(fmt.Sprintf("invalid childAt(%d) on a leaf node", index))
@@ -89,6 +92,7 @@ func (n *node) numChildren() int {
 }
 
 // nextSibling returns the next node with the same parent.
+// 返回下一个兄弟节点
 func (n *node) nextSibling() *node {
 	if n.parent == nil {
 		return nil
@@ -101,6 +105,7 @@ func (n *node) nextSibling() *node {
 }
 
 // prevSibling returns the previous node with the same parent.
+// 返回上一个兄弟节点
 func (n *node) prevSibling() *node {
 	if n.parent == nil {
 		return nil
@@ -113,6 +118,7 @@ func (n *node) prevSibling() *node {
 }
 
 // put inserts a key/value.
+// 所有的数据新增都发生在叶子节点,如果新增数据后B+树不平衡,之后会通过spill来进行拆分调整
 func (n *node) put(oldKey, newKey, value []byte, pgid pgid, flags uint32) {
 	if pgid >= n.bucket.tx.meta.pgid {
 		panic(fmt.Sprintf("pgid (%d) above high water mark (%d)", pgid, n.bucket.tx.meta.pgid))
@@ -127,11 +133,13 @@ func (n *node) put(oldKey, newKey, value []byte, pgid pgid, flags uint32) {
 
 	// Add capacity and shift nodes if we don't have an exact match and need to insert.
 	exact := (len(n.inodes) > 0 && index < len(n.inodes) && bytes.Equal(n.inodes[index].key, oldKey))
+	//如果key是新增而非替换,则需要为待插入节点追加空间
 	if !exact {
 		n.inodes = append(n.inodes, inode{})
 		copy(n.inodes[index+1:], n.inodes[index:])
 	}
 
+	//给要替换/插入的元素赋值
 	inode := &n.inodes[index]
 	inode.flags = flags
 	inode.key = newKey
@@ -158,11 +166,14 @@ func (n *node) del(key []byte) {
 }
 
 // read initializes the node from a page.
+// read通过mmap读取page,并转换为node
 func (n *node) read(p *page) {
 	n.pgid = p.id
 	n.isLeaf = ((p.flags & leafPageFlag) != 0)
+	//一个inode对应一个xxxPageElement对象
 	n.inodes = make(inodes, int(p.count))
 
+	// 加载所包含元素 indoes
 	for i := 0; i < int(p.count); i++ {
 		inode := &n.inodes[i]
 		if n.isLeaf {
@@ -179,6 +190,7 @@ func (n *node) read(p *page) {
 	}
 
 	// Save first key so we can find the node in the parent when we spill.
+	// 用第一个元素的key作为该node的key,以便父节点以此作为索引进行查找和路由
 	if len(n.inodes) > 0 {
 		n.key = n.inodes[0].key
 		_assert(len(n.key) > 0, "read: zero-length node key")
@@ -188,6 +200,7 @@ func (n *node) read(p *page) {
 }
 
 // write writes the items onto one or more pages.
+// 将node转换成page
 func (n *node) write(p *page) {
 	// Initialize page.
 	if n.isLeaf {
@@ -196,6 +209,7 @@ func (n *node) write(p *page) {
 		p.flags |= branchPageFlag
 	}
 
+	// 这里叶子节点不可能溢出,因为溢出会分裂
 	if len(n.inodes) >= 0xFFFF {
 		panic(fmt.Sprintf("inode overflow: %d (pgid=%d)", len(n.inodes), p.id))
 	}
@@ -594,10 +608,14 @@ func (s nodes) Less(i, j int) bool { return bytes.Compare(s[i].inodes[0].key, s[
 // inode represents an internal node inside of a node.
 // It can be used to point to elements in a page or point
 // to an element which hasn't been added to a page yet.
+/*
+	对于分支节点: 单个元素为key+引用
+	对于叶子节点: 单个元素为用户kv数据
+*/
 type inode struct {
-	flags uint32	//仅叶子节点使用.存放数据内容标识,为bucket或普通数据中的一种
-	pgid  pgid		//仅树枝节点使用. 存放节点的page id
-	key   []byte	//树枝节点和叶子节点公用
+	flags uint32	//存放数据内容标识,为bucket或普通数据中的一种.如果flag值为1表示子桶叶子节点,否则为普通叶子节点
+	pgid  pgid		//仅树枝(分支)节点使用. 存放节点的page id
+	key   []byte	//树枝(分支)节点和叶子节点公用
 	value []byte	//仅叶子节点使用,存放普通数据或bucket
 }
 
