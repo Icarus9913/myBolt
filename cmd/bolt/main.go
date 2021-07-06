@@ -1525,7 +1525,7 @@ func (n *branchPageElement) key() []byte {
 // DO NOT EDIT. Copied from the "bolt" package.
 // 叶子节点
 type leafPageElement struct {
-	flags uint32	//保留字段，同时方便对齐	/内容标识,可以为普通数据(0)或bucket(1)两者中的任一种
+	flags uint32	//内容标识,0表示叶子节点为普通的kv类型; 1表示为桶类型,key为桶的key
 	pos   uint32	//键值的位置，即位移		key的位置
 	ksize uint32	//键的长度				key的大小
 	vsize uint32	//值的长度				value的大小

@@ -58,11 +58,13 @@ func (f *freelist) pending_count() int {
 // copyall copies into dst a list of all free ids and all pending ids in one sorted list.
 // f.count returns the minimum length required for dst.
 func (f *freelist) copyall(dst []pgid) {
+	// 首先把pending状态的页放到一个数组中，并使其有序
 	m := make(pgids, 0, f.pending_count())
 	for _, list := range f.pending {
 		m = append(m, list...)
 	}
 	sort.Sort(m)
+	// 合并两个有序的列表，最后结果输出到dst中
 	mergepgids(dst, f.ids, m)
 }
 
@@ -86,18 +88,20 @@ func (f *freelist) allocate(n int) pgid {
 		}
 
 		// Reset initial page if this is not contiguous.
-		// 如果不连续,则重置 initial
+		// 如果不连续,则重置 initial,要找到一个连续的
 		if previd == 0 || id-previd != 1 {
 			initial = id
 		}
 
 		// If we found a contiguous block then remove it and return it.
+		// 找到了连续的块，然后将其返回即可
 		if (id-initial)+1 == pgid(n) {
 			// If we're allocating off the beginning then take the fast path
 			// and just adjust the existing slice. This will use extra memory
 			// temporarily but the append() in free() will realloc the slice
 			// as is necessary.
 			if (i + 1) == n {
+				// 找到的是前n个连续的空间
 				f.ids = f.ids[i+1:]
 			} else {
 				copy(f.ids[i-n+1:], f.ids[i+1:])
@@ -171,12 +175,13 @@ func (f *freelist) freed(pgid pgid) bool {
 }
 
 // read initializes the freelist from a freelist page.
-// 空闲列表从page中加载
+// 从磁盘page中加载freelist
 func (f *freelist) read(p *page) {
 	// If the page.count is at the max uint16 value (64k) then it's considered
 	// an overflow and the size of the freelist is stored as the first element.
 	idx, count := 0, int(p.count)
-	// count == 0xFFFF 表明实际 count 存储在 ptr 所指向的内容的第一个元素
+	// count == 0xFFFF 表明实际 count 存储在 ptr 所指向的内容的第一个元素,
+	// 因为之前如果count大于0xFFFF,就把count值存入ptr指向的第0个位置,详细看write方法
 	if count == 0xFFFF {
 		idx = 1
 		count = int(((*[maxAllocSize]pgid)(unsafe.Pointer(&p.ptr)))[0])
@@ -207,6 +212,7 @@ func (f *freelist) write(p *page) error {
 	// Combine the old free pgids and pgids waiting on an open transaction.
 
 	// Update the header flag.
+	// 设置页头中的页类型标识
 	p.flags |= freelistPageFlag
 
 	// The page.count can only hold up to 64k elements so if we overflow that
@@ -219,6 +225,7 @@ func (f *freelist) write(p *page) error {
 		// copyall 会将 pending 和 ids 合并并排序
 		f.copyall(((*[maxAllocSize]pgid)(unsafe.Pointer(&p.ptr)))[:])
 	} else {
+		// 将p.ptr中的第一个字节用来存储其空闲页的个数，同时将p.count设置为0xFFFF
 		p.count = 0xFFFF
 		((*[maxAllocSize]pgid)(unsafe.Pointer(&p.ptr)))[0] = pgid(lenids)
 		f.copyall(((*[maxAllocSize]pgid)(unsafe.Pointer(&p.ptr)))[1:])

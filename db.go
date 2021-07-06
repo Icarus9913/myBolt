@@ -1009,6 +1009,7 @@ func (m *meta) copy(dest *meta) {
 }
 
 // write writes the meta onto a page.
+// 将元数据写入物理存储页中
 func (m *meta) write(p *page) {
 	if m.root.root >= m.pgid {
 		panic(fmt.Sprintf("root bucket pgid (%d) above high water mark (%d)", m.root.root, m.pgid))
@@ -1017,12 +1018,14 @@ func (m *meta) write(p *page) {
 	}
 
 	// Page id is either going to be 0 or 1 which we can determine by the transaction ID.
+	// 指定页id和页类型
 	p.id = pgid(m.txid % 2)
 	p.flags |= metaPageFlag
 
 	// Calculate the checksum.
 	m.checksum = m.sum64()
 
+	// p.meta()返回的是p.ptr地址,通过此copy之后,meta信息就放入page中(ง •̀_•́)ง
 	m.copy(p.meta())
 }
 

@@ -226,6 +226,7 @@ func (n *node) write(p *page) {
 		_assert(len(item.key) > 0, "write: zero-length inode key")
 
 		// Write the page element.
+		// 写入叶子节点数据
 		if n.isLeaf {
 			elem := p.leafPageElement(uint16(i))
 			elem.pos = uint32(uintptr(unsafe.Pointer(&b[0])) - uintptr(unsafe.Pointer(elem)))
@@ -233,6 +234,7 @@ func (n *node) write(p *page) {
 			elem.ksize = uint32(len(item.key))
 			elem.vsize = uint32(len(item.value))
 		} else {
+			// 写入分支节点数据
 			elem := p.branchPageElement(uint16(i))
 			elem.pos = uint32(uintptr(unsafe.Pointer(&b[0])) - uintptr(unsafe.Pointer(elem)))
 			elem.ksize = uint32(len(item.key))

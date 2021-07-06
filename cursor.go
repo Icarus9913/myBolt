@@ -36,13 +36,16 @@ func (c *Cursor) Bucket() *Bucket {
 */
 func (c *Cursor) First() (key []byte, value []byte) {
 	_assert(c.bucket.tx.db != nil, "tx closed")
+	// 清空stack
 	c.stack = c.stack[:0]
 	p, n := c.bucket.pageNode(c.bucket.root)
+	// 一直找到第一个叶子节点，此处在添加stack时，一直让index设置为0即可
 	c.stack = append(c.stack, elemRef{page: p, node: n, index: 0})
 	c.first()
 
 	// If we land on an empty page then move to the next value.
 	// https://github.com/boltdb/bolt/issues/450
+	// 当前页时空的话，找下一个
 	if c.stack[len(c.stack)-1].count() == 0 {
 		c.next()
 	}
@@ -68,6 +71,7 @@ func (c *Cursor) Last() (key []byte, value []byte) {
 	c.stack = c.stack[:0]
 	p, n := c.bucket.pageNode(c.bucket.root)
 	ref := elemRef{page: p, node: n}
+	// 设置其index为当前页元素的最后一个
 	ref.index = ref.count() - 1
 	c.stack = append(c.stack, ref)
 	c.last()
@@ -108,6 +112,7 @@ func (c *Cursor) Prev() (key []byte, value []byte) {
 	for i := len(c.stack) - 1; i >= 0; i-- {
 		elem := &c.stack[i]
 		if elem.index > 0 {
+			// 往前移动一格
 			elem.index--
 			break
 		}
@@ -120,6 +125,7 @@ func (c *Cursor) Prev() (key []byte, value []byte) {
 	}
 
 	// Move down the stack to find the last element of the last leaf under this branch.
+	// 如果当前节点是叶子节点的话，则直接退出了，什么都不做。否则的话移动到新页的最后一个节点
 	c.last()
 	k, v, flags := c.keyValue()
 	if (flags & uint32(bucketLeafFlag)) != 0 {
@@ -140,6 +146,8 @@ func (c *Cursor) Seek(seek []byte) (key []byte, value []byte) {
 	k, v, flags := c.seek(seek)
 
 	// If we ended up after the last element of a page then move to the next one.
+	// 下面这一段逻辑是必须的，因为在seek()方法中，如果ref.index>ref.count()的话，就直接返回nil,nil,0了
+	// 这里需要返回下一个
 	if ref := &c.stack[len(c.stack)-1]; ref.index >= ref.count() {
 		k, v, flags = c.next()
 	}
@@ -166,6 +174,7 @@ func (c *Cursor) Delete() error {
 	if (flags & bucketLeafFlag) != 0 {
 		return ErrIncompatibleValue
 	}
+	// 从node中移除，本质上将inode数组进行移动
 	c.node().del(key)
 
 	return nil
@@ -185,7 +194,9 @@ func (c *Cursor) seek(seek []byte) (key []byte, value []byte, flags uint32) {
 
 	// Start from root page/node and traverse to correct page.
 	c.stack = c.stack[:0]
+	// 开始根据seek的key值搜索root
 	c.search(seek, c.bucket.root)
+	// 执行完搜索后，stack中保存了所遍历的路径
 	ref := &c.stack[len(c.stack)-1]
 
 	// If the cursor is pointing to the end of page/node then return nil.
@@ -194,6 +205,7 @@ func (c *Cursor) seek(seek []byte) (key []byte, value []byte, flags uint32) {
 	}
 
 	// If this is a bucket then return a nil value.
+	//获取值
 	return c.keyValue()
 }
 
@@ -260,6 +272,7 @@ func (c *Cursor) next() (key []byte, value []byte, flags uint32) {
 		for i = len(c.stack) - 1; i >= 0; i-- {
 			elem := &c.stack[i]
 			if elem.index < elem.count()-1 {
+				// 元素还有时，往后移动一个
 				elem.index++
 				break
 			}
@@ -267,13 +280,17 @@ func (c *Cursor) next() (key []byte, value []byte, flags uint32) {
 
 		// If we've hit the root page then stop and return. This will leave the
 		// cursor on the last element of the last page.
+		// 所有页都遍历完了
 		if i == -1 {
 			return nil, nil, 0
 		}
 
 		// Otherwise start from where we left off in the stack and find the
 		// first element of the first leaf page.
+		// 剩余的节点里面找，跳过原先遍历过的节点
 		c.stack = c.stack[:i+1]
+		// 如果是叶子节点，first()啥都不做，直接退出。返回elem.index+1的数据
+		// 非叶子节点的话，需要移动到stack中最后一个路径的第一个元素
 		c.first()
 
 		// If this is an empty page then restart and move back up the stack.
@@ -294,21 +311,26 @@ func (c *Cursor) search(key []byte, pgid pgid) {
 		panic(fmt.Sprintf("invalid page type: %d: %x", p.id, p.flags))
 	}
 	e := elemRef{page: p, node: n}
+	//记录遍历过的路径
 	c.stack = append(c.stack, e)
 
 	// If we're on a leaf page/node then find the specific node.
+	// 如果是叶子节点，找具体的值node
 	if e.isLeaf() {
 		c.nsearch(key)
 		return
 	}
 
 	if n != nil {
+		// 先搜索node，因为node是加载到内存中的
 		c.searchNode(key, n)
 		return
 	}
+	// 如果node没有,则在page中找
 	c.searchPage(key, p)
 }
 
+// node中搜索
 func (c *Cursor) searchNode(key []byte, n *node) {
 	var exact bool
 	index := sort.Search(len(n.inodes), func(i int) bool {
@@ -329,6 +351,7 @@ func (c *Cursor) searchNode(key []byte, n *node) {
 	c.search(key, n.inodes[index].pgid)
 }
 
+// 页中搜索
 func (c *Cursor) searchPage(key []byte, p *page) {
 	// Binary search for the correct range.
 	inodes := p.branchPageElements()
@@ -353,11 +376,13 @@ func (c *Cursor) searchPage(key []byte, p *page) {
 }
 
 // nsearch searches the leaf node on the top of the stack for a key.
+// 搜索叶子节点
 func (c *Cursor) nsearch(key []byte) {
 	e := &c.stack[len(c.stack)-1]
 	p, n := e.page, e.node
 
 	// If we have a node then search its inodes.
+	// 先搜索node
 	if n != nil {
 		index := sort.Search(len(n.inodes), func(i int) bool {
 			return bytes.Compare(n.inodes[i].key, key) != -1
@@ -367,6 +392,7 @@ func (c *Cursor) nsearch(key []byte) {
 	}
 
 	// If we have a page then search its leaf elements.
+	// 如果没有node,则去page里查
 	inodes := p.leafPageElements()
 	index := sort.Search(int(p.count), func(i int) bool {
 		return bytes.Compare(inodes[i].key(), key) != -1
@@ -376,18 +402,21 @@ func (c *Cursor) nsearch(key []byte) {
 
 // keyValue returns the key and value of the current leaf element.
 func (c *Cursor) keyValue() ([]byte, []byte, uint32) {
+	//最后一个节点为叶子节点
 	ref := &c.stack[len(c.stack)-1]
 	if ref.count() == 0 || ref.index >= ref.count() {
 		return nil, nil, 0
 	}
 
 	// Retrieve value from node.
+	// 先从内存中取
 	if ref.node != nil {
 		inode := &ref.node.inodes[ref.index]
 		return inode.key, inode.value, inode.flags
 	}
 
 	// Or retrieve value from page.
+	// 若node中未找到,则从page中拿
 	elem := ref.page.leafPageElement(uint16(ref.index))
 	return elem.key(), elem.value(), elem.flags
 }

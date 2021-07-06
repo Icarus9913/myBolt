@@ -33,11 +33,12 @@ const (
 const DefaultFillPercent = 0.5
 
 // Bucket represents a collection of key/value pairs inside the database.
+// 一组key/value的集合，也就是一个b+树
 type Bucket struct {
-	*bucket
+	*bucket		//在内联时bucket主要用来存储其桶的value并在后面拼接所有的元素，即所谓的内联
 	tx       *Tx                // the associated transaction
 	buckets  map[string]*Bucket // subbucket cache
-	page     *page              // inline page reference
+	page     *page              // inline page reference	内联页引用
 	rootNode *node              // materialized node for the root page.
 	nodes    map[pgid]*node     // node cache
 
@@ -46,7 +47,7 @@ type Bucket struct {
 	// amount if you know that your write workloads are mostly append-only.
 	//
 	// This is non-persisted across transactions so it must be set in every Tx.
-	FillPercent float64
+	FillPercent float64		//填充率
 }
 
 // bucket represents the on-file representation of a bucket.

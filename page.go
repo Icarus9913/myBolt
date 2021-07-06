@@ -55,6 +55,7 @@ func (p *page) typ() string {
 }
 
 // meta returns a pointer to the metadata section of the page.
+// 将p.ptr地址块数据转成meta类型
 func (p *page) meta() *meta {
 	return (*meta)(unsafe.Pointer(&p.ptr))
 }
@@ -66,6 +67,7 @@ func (p *page) leafPageElement(index uint16) *leafPageElement {
 }
 
 // leafPageElements retrieves a list of leaf nodes.
+// 叶子节点的类型是[0x7FFFFFF]leafPageElement,最后返回一个切片
 func (p *page) leafPageElements() []leafPageElement {
 	if p.count == 0 {
 		return nil
@@ -115,7 +117,7 @@ func (n *branchPageElement) key() []byte {
 // leafPageElement represents a node on a leaf page.
 // 叶子节点
 type leafPageElement struct {
-	flags uint32	//保留字段，同时方便对齐	/内容标识,可以为普通数据(0)或bucket(1)两者中的任一种
+	flags uint32	//内容标识,0表示叶子节点为普通的kv类型; 1表示为桶类型,key为桶的key
 	pos   uint32	//键值的位置，即位移		key的位置
 	ksize uint32	//键的长度				key的大小
 	vsize uint32	//值的长度				value的大小
@@ -163,6 +165,7 @@ func (a pgids) merge(b pgids) pgids {
 
 // mergepgids copies the sorted union of a and b into dst.
 // If dst is too small, it panics.
+// 将a和b按照有序合并成到dst中，a和b有序
 func mergepgids(dst, a, b pgids) {
 	if len(dst) < len(a)+len(b) {
 		panic(fmt.Errorf("mergepgids bad len %d < %d + %d", len(dst), len(a), len(b)))
