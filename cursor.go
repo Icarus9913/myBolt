@@ -435,6 +435,7 @@ func (c *Cursor) node() *node {
 	if n == nil {
 		n = c.bucket.node(c.stack[0].page.id, nil)
 	}
+	// 非叶子节点
 	for _, ref := range c.stack[:len(c.stack)-1] {
 		_assert(!n.isLeaf, "expected branch node")
 		n = n.childAt(int(ref.index))

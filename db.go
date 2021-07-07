@@ -96,17 +96,17 @@ type DB struct {
 
 	path     string
 	file     *os.File
-	lockfile *os.File // windows only
-	dataref  []byte   // mmap'ed readonly, write throws SEGV
-	data     *[maxMapSize]byte
+	lockfile *os.File          // windows only
+	dataref  []byte            // mmap'ed readonly, write throws SEGV
+	data     *[maxMapSize]byte // 通过mmap映射进来的地址
 	datasz   int
 	filesz   int // current on disk file size
 	meta0    *meta
 	meta1    *meta
 	pageSize int
 	opened   bool
-	rwtx     *Tx
-	txs      []*Tx
+	rwtx     *Tx   // 写事务锁
+	txs      []*Tx // 读事务数组
 	freelist *freelist
 	stats    Stats
 
@@ -171,6 +171,7 @@ func Open(path string, mode os.FileMode, options *Options) (*DB, error) {
 	// Open data file and separate sync handler for metadata writes.
 	db.path = path
 	var err error
+	// 打开db文件
 	if db.file, err = os.OpenFile(db.path, flag|os.O_CREATE, mode); err != nil {
 		_ = db.close()
 		return nil, err
@@ -183,6 +184,7 @@ func Open(path string, mode os.FileMode, options *Options) (*DB, error) {
 	// if !options.ReadOnly.
 	// The database file is locked using the shared lock (more than one process may
 	// hold a lock at the same time) otherwise (options.ReadOnly is set).
+	// 只读加共享锁、否则加互斥锁
 	if err := flock(db, mode, !db.readOnly, options.Timeout); err != nil {
 		_ = db.close()
 		return nil, err
@@ -196,13 +198,16 @@ func Open(path string, mode os.FileMode, options *Options) (*DB, error) {
 		return nil, err
 	} else if info.Size() == 0 {
 		// Initialize new files with meta pages.
+		// 初始化新db文件
 		if err := db.init(); err != nil {
 			return nil, err
 		}
 	} else {
 		// Read the first meta page to determine the page size.
+		// 不是新文件，读取第一页元数据, 2^12,正好是4k
 		var buf [0x1000]byte
 		if _, err := db.file.ReadAt(buf[:], 0); err == nil {
+			// 仅仅是读取了pageSize
 			m := db.pageInBuffer(buf[:], 0).meta()
 			if err := m.validate(); err != nil {
 				// If we can't read the page size, we can assume it's the same
@@ -222,11 +227,13 @@ func Open(path string, mode os.FileMode, options *Options) (*DB, error) {
 	// Initialize page pool.
 	db.pagePool = sync.Pool{
 		New: func() interface{} {
+			// 4k
 			return make([]byte, db.pageSize)
 		},
 	}
 
 	// Memory map the data file.
+	// mmap映射db文件数据到内存
 	if err := db.mmap(options.InitialMmapSize); err != nil {
 		_ = db.close()
 		return nil, err
@@ -980,15 +987,15 @@ type Info struct {
 
 // meta page是boltDB实例元数据所在处,它告诉人们它是什么以及如何理解整个数据库文件
 type meta struct {
-	magic    uint32		//一个生成好的 32 位随机数，用来确定该文件是一个 boltDB 实例的数据库文件（另一个文件起始位置拥有相同数据的可能性极低）
-	version  uint32		//表明该文件所属的 boltDB 版本，便于日后做兼容与迁移
-	pageSize uint32		//页大小,根据系统获得,一般为4K
-	flags    uint32		//保留字段,未使用?  (表示为metadata)
-	root     bucket		//boltDB 实例的所有索引及数据的根结点	起始时从3开始	各个子bucket根所组成的树
-	freelist pgid		//boltDB 在数据删除过程中可能出现剩余磁盘空间，这些空间会被分块记录在 freelist 中备用	起始时从2开始
-	pgid     pgid		//下一个将要分配的 page id (已分配的所有 pages 的最大 id 加 1)
-	txid     txid		//下一个将要分配的事务 id。事务 id 单调递增，是每个事务发生的逻辑时间，它在实现 boltDB 的并发访问控制中起到重要作用
-	checksum uint64		//用于确认 meta page 数据本身的完整性，保证读取的就是上一次正确写入的数据
+	magic    uint32 //一个生成好的 32 位随机数，用来确定该文件是一个 boltDB 实例的数据库文件（另一个文件起始位置拥有相同数据的可能性极低）
+	version  uint32 //表明该文件所属的 boltDB 版本，便于日后做兼容与迁移
+	pageSize uint32 //页大小,根据系统获得,一般为4K
+	flags    uint32 //保留字段,未使用?  (表示为metadata)
+	root     bucket //boltDB 实例的所有索引及数据的根结点	起始时从3开始	各个子bucket根所组成的树
+	freelist pgid   //boltDB 在数据删除过程中可能出现剩余磁盘空间，这些空间会被分块记录在 freelist 中备用	起始时从2开始
+	pgid     pgid   //下一个将要分配的 page id (已分配的所有 pages 的最大 id 加 1)
+	txid     txid   //下一个将要分配的事务 id。事务 id 单调递增，是每个事务发生的逻辑时间，它在实现 boltDB 的并发访问控制中起到重要作用
+	checksum uint64 //用于确认 meta page 数据本身的完整性，保证读取的就是上一次正确写入的数据
 }
 
 // validate checks the marker bytes and version of the meta page to ensure it matches this binary.

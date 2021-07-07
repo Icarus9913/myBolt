@@ -105,7 +105,7 @@ func (n *node) nextSibling() *node {
 }
 
 // prevSibling returns the previous node with the same parent.
-// 返回上一个兄弟节点
+// 返回前一个兄弟节点
 func (n *node) prevSibling() *node {
 	if n.parent == nil {
 		return nil
@@ -119,6 +119,8 @@ func (n *node) prevSibling() *node {
 
 // put inserts a key/value.
 // 所有的数据新增都发生在叶子节点,如果新增数据后B+树不平衡,之后会通过spill来进行拆分调整
+// 如果put的是一个key,value的话,不需要指定pgid
+// 如果put的一个树枝节点,则需要指定pgid,不需要指定value
 func (n *node) put(oldKey, newKey, value []byte, pgid pgid, flags uint32) {
 	if pgid >= n.bucket.tx.meta.pgid {
 		panic(fmt.Sprintf("pgid (%d) above high water mark (%d)", pgid, n.bucket.tx.meta.pgid))
@@ -289,6 +291,7 @@ func (n *node) split(pageSize int) []*node {
 func (n *node) splitTwo(pageSize int) (*node, *node) {
 	// Ignore the split if the page doesn't have at least enough nodes for
 	// two pages or if the nodes can fit in a single page.
+	// 太小的话,就不拆分了
 	if len(n.inodes) <= (minKeysPerPage*2) || n.sizeLessThan(pageSize) {
 		return n, nil
 	}
@@ -372,6 +375,7 @@ func (n *node) spill() error {
 	n.children = nil
 
 	// Split nodes into appropriate sizes. The first node will always be n.
+	// 将当前的node进行拆分成多个node
 	var nodes = n.split(tx.db.pageSize)
 	for _, node := range nodes {
 		// Add node's page to the freelist if it's not new.
@@ -401,6 +405,7 @@ func (n *node) spill() error {
 				key = node.inodes[0].key
 			}
 
+			// 放入父亲节点中
 			node.parent.put(key, node.inodes[0].key, nil, node.pgid, 0)
 			node.key = node.inodes[0].key
 			_assert(len(node.key) > 0, "spill: zero-length node key")
@@ -477,6 +482,7 @@ func (n *node) rebalance() {
 
 	// Destination node is right sibling if idx == 0, otherwise left sibling.
 	var target *node
+	// 判断当前node是否是parent的第一个孩子节点，是的话，就要找它的下一个兄弟节点，否则的话，就找上一个兄弟节点
 	var useNextSibling = (n.parent.childIndex(n) == 0)
 	if useNextSibling {
 		target = n.nextSibling()

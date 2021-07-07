@@ -119,6 +119,7 @@ func (b *Bucket) Bucket(name []byte) *Bucket {
 
 	// Otherwise create a bucket and cache it.
 	var child = b.openBucket(v)
+	// 加速缓存的作用
 	if b.buckets != nil {
 		b.buckets[string(name)] = child
 	}
@@ -149,6 +150,7 @@ func (b *Bucket) openBucket(value []byte) *Bucket {
 	}
 
 	// Save a reference to the inline page if the bucket is inline.
+	// 内联桶
 	if child.root == 0 {
 		child.page = (*page)(unsafe.Pointer(&value[bucketHeaderSize]))
 	}
@@ -169,14 +171,18 @@ func (b *Bucket) CreateBucket(key []byte) (*Bucket, error) {
 	}
 
 	// Move cursor to correct position.
+	// 拿到游标,即遍历bucket,存下路径
 	c := b.Cursor()
+	// 开始遍历、找到合适的位置
 	k, _, flags := c.seek(key)
 
 	// Return an error if there is an existing key.
 	if bytes.Equal(key, k) {
+		// 是桶,已经存在了
 		if (flags & bucketLeafFlag) != 0 {
 			return nil, ErrBucketExists
 		}
+		// 不是桶、但key已经存在了
 		return nil, ErrIncompatibleValue
 	}
 
@@ -186,10 +192,13 @@ func (b *Bucket) CreateBucket(key []byte) (*Bucket, error) {
 		rootNode:    &node{isLeaf: true},
 		FillPercent: DefaultFillPercent,
 	}
+	// 拿到bucket对应的value
 	var value = bucket.write()
 
 	// Insert into node.
 	key = cloneBytes(key)
+	// 插入到inode中
+	// c.node()方法会在内存中建立这棵树，调用n.read(page)
 	c.node().put(key, key, value, 0, bucketLeafFlag)
 
 	// Since subbuckets are not allowed on inline buckets, we need to
@@ -197,6 +206,7 @@ func (b *Bucket) CreateBucket(key []byte) (*Bucket, error) {
 	// to be treated as a regular, non-inline bucket for the rest of the tx.
 	b.page = nil
 
+	//根据key获取一个桶
 	return b.Bucket(key), nil
 }
 
@@ -235,6 +245,7 @@ func (b *Bucket) DeleteBucket(key []byte) error {
 
 	// Recursively delete all child buckets.
 	child := b.Bucket(key)
+	// 递归删除子桶
 	err := child.ForEach(func(k, v []byte) error {
 		if v == nil {
 			if err := child.DeleteBucket(k); err != nil {
@@ -248,14 +259,17 @@ func (b *Bucket) DeleteBucket(key []byte) error {
 	}
 
 	// Remove cached copy.
+	// 在缓存中移除
 	delete(b.buckets, string(key))
 
 	// Release all bucket pages to freelist.
+	// 释放该Bucket的page
 	child.nodes = nil
 	child.rootNode = nil
 	child.free()
 
 	// Delete the node if we have a matching key.
+	// 从叶子节点中移除
 	c.node().del(key)
 
 	return nil
@@ -268,6 +282,7 @@ func (b *Bucket) Get(key []byte) []byte {
 	k, v, flags := b.Cursor().seek(key)
 
 	// Return nil if this is a bucket.
+	// 内嵌桶
 	if (flags & bucketLeafFlag) != 0 {
 		return nil
 	}
@@ -301,6 +316,7 @@ func (b *Bucket) Put(key []byte, value []byte) error {
 	k, _, flags := c.seek(key)
 
 	// Return an error if there is an existing key with a bucket value.
+	// 已存在叶子节点,无法插入
 	if bytes.Equal(key, k) && (flags&bucketLeafFlag) != 0 {
 		return ErrIncompatibleValue
 	}
@@ -327,6 +343,7 @@ func (b *Bucket) Delete(key []byte) error {
 	_, _, flags := c.seek(key)
 
 	// Return an error if there is already existing bucket value.
+	// 内联桶不能删,只能删key-value对
 	if (flags & bucketLeafFlag) != 0 {
 		return ErrIncompatibleValue
 	}
@@ -535,9 +552,10 @@ func (b *Bucket) spill() error {
 		var value []byte
 		if child.inlineable() {
 			child.free()
+			// 重新更新bucket的val的值
 			value = child.write()
-			// 否则,先调整子bucket,然后将其根节点page id作为值写入父bucket相应叶子节点
 		} else {
+			// 否则,先调整子bucket,然后将其根节点page id作为值写入父bucket相应叶子节点
 			if err := child.spill(); err != nil {
 				return err
 			}
