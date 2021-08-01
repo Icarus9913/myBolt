@@ -228,6 +228,7 @@ func (n *node) write(p *page) {
 		_assert(len(item.key) > 0, "write: zero-length inode key")
 
 		// Write the page element.
+		// 这一部分其实是写头数据，如leafPageElement/branchPageElement，里面都是真实kv数据的片偏移和kv-size
 		// 写入叶子节点数据
 		if n.isLeaf {
 			elem := p.leafPageElement(uint16(i))
@@ -254,6 +255,7 @@ func (n *node) write(p *page) {
 		}
 
 		// Write data for the element to the end of the page.
+		// 这一部分是写入真实数据，及kv数据
 		copy(b[0:], item.key)
 		b = b[klen:]
 		copy(b[0:], item.value)

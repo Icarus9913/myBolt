@@ -989,7 +989,7 @@ type Info struct {
 type meta struct {
 	magic    uint32 //一个生成好的 32 位随机数，用来确定该文件是一个 boltDB 实例的数据库文件（另一个文件起始位置拥有相同数据的可能性极低）
 	version  uint32 //表明该文件所属的 boltDB 版本，便于日后做兼容与迁移
-	pageSize uint32 //页大小,根据系统获得,一般为4K
+	pageSize uint32 //页大小,根据系统获得,一般为4K (还记得内存大页吗?)
 	flags    uint32 //保留字段,未使用?  (表示为metadata)
 	root     bucket //boltDB 实例的所有索引及数据的根结点	起始时从3开始	各个子bucket根所组成的树
 	freelist pgid   //boltDB 在数据删除过程中可能出现剩余磁盘空间，这些空间会被分块记录在 freelist 中备用	起始时从2开始
