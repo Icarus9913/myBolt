@@ -210,7 +210,7 @@ func (c *Cursor) seek(seek []byte) (key []byte, value []byte, flags uint32) {
 }
 
 // first moves the cursor to the first leaf element under the last page in the stack.
-// 移动 cursor 到以栈顶元素为根的子树中最左边的叶子节点
+// 移动 cursor 到以栈顶元素为根的子树中最左边的叶子节点, stack[]最后一个元素就是第一个叶子节点
 func (c *Cursor) first() {
 	for {
 		// Exit when we hit a leaf page.
@@ -401,6 +401,7 @@ func (c *Cursor) nsearch(key []byte) {
 }
 
 // keyValue returns the key and value of the current leaf element.
+// 返回当前cursor stack里的最后一个元素
 func (c *Cursor) keyValue() ([]byte, []byte, uint32) {
 	//最后一个节点为叶子节点
 	ref := &c.stack[len(c.stack)-1]
@@ -460,6 +461,7 @@ func (r *elemRef) isLeaf() bool {
 }
 
 // count returns the number of inodes or page elements.
+// 返回inodes中node元素个数或者page中元素个数
 func (r *elemRef) count() int {
 	if r.node != nil {
 		return len(r.node.inodes)

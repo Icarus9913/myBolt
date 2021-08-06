@@ -61,6 +61,7 @@ func (p *page) meta() *meta {
 }
 
 // leafPageElement retrieves the leaf node by index
+// 根据idx指定某一个leafPageElement
 func (p *page) leafPageElement(index uint16) *leafPageElement {
 	n := &((*[0x7FFFFFF]leafPageElement)(unsafe.Pointer(&p.ptr)))[index]
 	return n
@@ -68,6 +69,7 @@ func (p *page) leafPageElement(index uint16) *leafPageElement {
 
 // leafPageElements retrieves a list of leaf nodes.
 // 叶子节点的类型是[0x7FFFFFF]leafPageElement,最后返回一个切片
+// 一个page的ptr指向存储的一块内存为:前部分是一堆leafPageElement{},后部分是一堆kv键.
 func (p *page) leafPageElements() []leafPageElement {
 	if p.count == 0 {
 		return nil
@@ -76,11 +78,13 @@ func (p *page) leafPageElements() []leafPageElement {
 }
 
 // branchPageElement retrieves the branch node by index
+// 根据idx指定某一个branchPageElement
 func (p *page) branchPageElement(index uint16) *branchPageElement {
 	return &((*[0x7FFFFFF]branchPageElement)(unsafe.Pointer(&p.ptr)))[index]
 }
 
 // branchPageElements retrieves a list of branch nodes.
+// 一个page的ptr指向存储的一块内存为:前部分是一堆branchPageElement{},后部分是一堆kv键.
 func (p *page) branchPageElements() []branchPageElement {
 	if p.count == 0 {
 		return nil

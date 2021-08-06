@@ -54,6 +54,7 @@ type Bucket struct {
 // This is stored as the "value" of a bucket key. If the bucket is small enough,
 // then its root page can be stored inline in the "value", after the bucket
 // header. In the case of inline buckets, the "root" will be 0.
+// 该结构为bucket header
 type bucket struct {
 	root     pgid   // page id of the bucket's root-level page
 	sequence uint64 // monotonically incrementing, used by NextSequence()
@@ -609,6 +610,8 @@ func (b *Bucket) spill() error {
 
 // inlineable returns true if a bucket is small enough to be written inline
 // and if it contains no subbuckets. Otherwise returns false.
+// 每个subbucket都会占据至少一个page,若subbucket中的数据很少,会造成磁盘空间的浪费.
+// inline bucket是将小的subbucket的值完整放在父bucket的leaf node上,从而减少page的个数.
 func (b *Bucket) inlineable() bool {
 	var n = b.rootNode
 
@@ -623,6 +626,8 @@ func (b *Bucket) inlineable() bool {
 	for _, inode := range n.inodes {
 		size += leafPageElementSize + len(inode.key) + len(inode.value)
 
+		// 自身已经是subbucket了,则他的node数据部分不允许是bucket.
+		// 这样自身subbucket才能放在父bucket的leaf node上
 		if inode.flags&bucketLeafFlag != 0 {
 			return false
 		} else if size > b.maxInlineBucketSize() {
@@ -645,10 +650,12 @@ func (b *Bucket) write() []byte {
 	var value = make([]byte, bucketHeaderSize+n.size())
 
 	// Write a bucket header.
+	// 先把bucket header写进去
 	var bucket = (*bucket)(unsafe.Pointer(&value[0]))
 	*bucket = *b.bucket
 
 	// Convert byte slice to a fake page and write the root node.
+	// bucket header大小偏移后就是page的数据
 	var p = (*page)(unsafe.Pointer(&value[bucketHeaderSize]))
 	n.write(p)
 
@@ -735,6 +742,7 @@ func (b *Bucket) dereference() {
 
 // pageNode returns the in-memory node, if it exists.
 // Otherwise returns the underlying page.
+// 如果内存中还存有node则直接返回,否则返回page
 func (b *Bucket) pageNode(id pgid) (*page, *node) {
 	// Inline buckets have a fake page embedded in their value so treat them
 	// differently. We'll return the rootNode (if available) or the fake page.
