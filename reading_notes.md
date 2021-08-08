@@ -56,8 +56,26 @@ inline bucket:
 因为每个subbucket都会占据至少一个page,若subbucket数据很少,又去重新开辟page的话就会很浪费磁盘空间.  
 > inline bucket的限制: 1.没有subbucket；   2.整个bucket的大小不能超过page size/4 
 
+Tx: 
+
+写事务流程:
+* 根据db初始化事务：拷贝一份metadata，初始化root bucket，自增txid
+* 从root bucket开始，遍历B+树进行操作，所有的修改在内存中进行
+* 提交写事务
+  * 平衡B+树，在分裂的时候会给每个修改过的node分配新的page
+  * 给freelist分配新的page
+  * 将B+树数据和freelist数据写入文件
+  * 将metadata写入文件
+
+读事务流程：
+* 根据db初始化事务：拷贝一份metadata，初始化root bucket
+* 将当前读事务添加到db.txs中
+* 从root bucket开始，遍历B+树进行查找
+* 结束时，将自身移出db.txs
 
 
+
+      
 
 
 

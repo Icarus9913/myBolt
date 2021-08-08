@@ -47,11 +47,12 @@ func (tx *Tx) init(db *DB) {
 	tx.pages = nil
 
 	// Copy the meta page since it can be changed by the writer.
-	// 拷贝元信息
+	// 拷贝元信息,db初始化的时候就已经封装了metaPage，freelistPage，leafPage
 	tx.meta = &meta{}
 	db.meta().copy(tx.meta)
 
 	// Copy over the root bucket.
+	// 拷贝根节点,meta里封装了root
 	tx.root = newBucket(tx)
 	tx.root.bucket = &bucket{}
 	*tx.root.bucket = tx.meta.root
@@ -143,6 +144,7 @@ func (tx *Tx) OnCommit(fn func()) {
 // Commit writes all changes to disk and updates the meta page.
 // Returns an error if a disk write error occurs, or if Commit is
 // called on a read-only transaction.
+// 先更新数据再更新元信息
 func (tx *Tx) Commit() error {
 	_assert(!tx.managed, "managed tx commit not allowed")
 	if tx.db == nil {
@@ -154,6 +156,7 @@ func (tx *Tx) Commit() error {
 	// TODO(benbjohnson): Use vectorized I/O to write out dirty pages.
 
 	// Rebalance nodes which have had deletions.
+	// 删除时，进行平衡，页合并
 	var startTime = time.Now()
 	tx.root.rebalance()
 	if tx.stats.Rebalance > 0 {
@@ -161,6 +164,7 @@ func (tx *Tx) Commit() error {
 	}
 
 	// spill data onto dirty pages.
+	// 页分裂
 	startTime = time.Now()
 	if err := tx.root.spill(); err != nil {
 		tx.rollback()
@@ -175,19 +179,25 @@ func (tx *Tx) Commit() error {
 
 	// Free the freelist and allocate new pages for it. This will overestimate
 	// the size of the freelist but not underestimate the size (which would be bad).
+	// 分配新的页面给freelist，然后将freelist写入新的页面
 	tx.db.freelist.free(tx.meta.txid, tx.db.page(tx.meta.freelist))
+	// 空闲列表可能会增加，因此需要重新分配页用来存储空闲列表
+	// 因为在开启写事务的时候，有去释放之前读事务占用的页信息，因此此处需要判断是否freelist会有溢出的问题
 	p, err := tx.allocate((tx.db.freelist.size() / tx.db.pageSize) + 1)
 	if err != nil {
 		tx.rollback()
 		return err
 	}
+	// 将freelist写入到连续的新页中
 	if err := tx.db.freelist.write(p); err != nil {
 		tx.rollback()
 		return err
 	}
+	// 更新元数据的页id
 	tx.meta.freelist = p.id
 
 	// If the high water mark has moved up then attempt to grow the database.
+	// 在allocate中有可能会更改meta.pgid
 	if tx.meta.pgid > opgid {
 		if err := tx.db.grow(int(tx.meta.pgid+1) * tx.db.pageSize); err != nil {
 			tx.rollback()
@@ -197,6 +207,7 @@ func (tx *Tx) Commit() error {
 
 	// Write dirty pages to disk.
 	startTime = time.Now()
+	// 写数据
 	if err := tx.write(); err != nil {
 		tx.rollback()
 		return err
@@ -220,6 +231,7 @@ func (tx *Tx) Commit() error {
 	}
 
 	// Write meta to disk.
+	// 元信息写入磁盘
 	if err := tx.writeMeta(); err != nil {
 		tx.rollback()
 		return err
@@ -239,6 +251,10 @@ func (tx *Tx) Commit() error {
 
 // Rollback closes the transaction and ignores all previous updates. Read-only
 // transactions must be rolled back and not committed.
+/*
+	1.如果当前事务是只读事务，则只需要从db中的txs中找到当前事务，然后移除掉即可
+	2.如果当前是读写事务，则需要将空闲列表中和该事务关联的页释放掉，同时重新从freelist中加载空闲页
+*/
 func (tx *Tx) Rollback() error {
 	_assert(!tx.managed, "managed tx rollback not allowed")
 	if tx.db == nil {
@@ -253,7 +269,9 @@ func (tx *Tx) rollback() {
 		return
 	}
 	if tx.writable {
+		// 移除该事务相关的pages
 		tx.db.freelist.rollback(tx.meta.txid)
+		// 重新从freelist页中读取构建空闲列表
 		tx.db.freelist.reload(tx.db.page(tx.db.meta().freelist))
 	}
 	tx.close()
@@ -456,6 +474,7 @@ func (tx *Tx) checkBucket(b *Bucket, reachable map[pgid]*page, freed map[pgid]bo
 }
 
 // allocate returns a contiguous block of memory starting at a given page.
+// 分配一段连续的页
 func (tx *Tx) allocate(count int) (*page, error) {
 	p, err := tx.db.allocate(count)
 	if err != nil {
@@ -475,6 +494,7 @@ func (tx *Tx) allocate(count int) (*page, error) {
 // write writes any dirty pages to disk.
 func (tx *Tx) write() error {
 	// Sort pages by id.
+	// 保证写的页是有序的
 	pages := make(pages, 0, len(tx.pages))
 	for _, p := range tx.pages {
 		pages = append(pages, p)
@@ -485,11 +505,13 @@ func (tx *Tx) write() error {
 
 	// Write pages to disk in order.
 	for _, p := range pages {
+		// 页数和偏移量
 		size := (int(p.overflow) + 1) * tx.db.pageSize
 		offset := int64(p.id) * int64(tx.db.pageSize)
 
 		// Write out page in "max allocation" sized chunks.
 		ptr := (*[maxAllocSize]byte)(unsafe.Pointer(p))
+		// 循环写某一页
 		for {
 			// Limit our write to our max allocation size.
 			sz := size
@@ -513,7 +535,9 @@ func (tx *Tx) write() error {
 			}
 
 			// Otherwise move offset forward and move pointer to next chunk.
+			// 移动偏移量
 			offset += int64(sz)
+			// 同时指针也移动
 			ptr = (*[maxAllocSize]byte)(unsafe.Pointer(&ptr[sz]))
 		}
 	}
@@ -536,6 +560,7 @@ func (tx *Tx) write() error {
 		buf := (*[maxAllocSize]byte)(unsafe.Pointer(p))[:tx.db.pageSize]
 
 		// See https://go.googlesource.com/go/+/f03c9202c43e0abb130669852082117ca50aa9b1
+		// 清空buf，然后放入pagePool中
 		for i := range buf {
 			buf[i] = 0
 		}
@@ -550,6 +575,7 @@ func (tx *Tx) writeMeta() error {
 	// Create a temporary buffer for the meta page.
 	buf := make([]byte, tx.db.pageSize)
 	p := tx.db.pageInBuffer(buf, 0)
+	// 将事务中的元信息写入到页中
 	tx.meta.write(p)
 
 	// Write the meta page to file.

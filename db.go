@@ -547,6 +547,7 @@ func (db *DB) beginRWTx() (*Tx, error) {
 
 	// Free any pages associated with closed read-only transactions.
 	var minid txid = 0xFFFFFFFFFFFFFFFF
+	// 找最小的事务id
 	for _, t := range db.txs {
 		if t.meta.txid < minid {
 			minid = t.meta.txid
@@ -842,6 +843,10 @@ func (db *DB) meta() *meta {
 }
 
 // allocate returns a contiguous block of memory starting at a given page.
+/*
+	这里的分配 page 不是真的分配文件中某一 page 来写，而是分配了一个 buffer 和起始的 page id，
+	首先将 node 的信息写入这个 buffer，之后统一的写入 page id 对应的文件位置.
+*/
 func (db *DB) allocate(count int) (*page, error) {
 	// Allocate a temporary buffer for the page.
 	var buf []byte
