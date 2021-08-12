@@ -204,7 +204,7 @@ func Open(path string, mode os.FileMode, options *Options) (*DB, error) {
 		}
 	} else {
 		// Read the first meta page to determine the page size.
-		// 不是新文件，读取第一页元数据, 2^12,正好是4k
+		// 不是新文件，读取第一页元数据, 2^12,正好是4k. 因为最初init的时候分配的缓冲大小是pageSize*4
 		var buf [0x1000]byte
 		if _, err := db.file.ReadAt(buf[:], 0); err == nil {
 			// 仅仅是读取了pageSize
@@ -322,6 +322,7 @@ func (db *DB) mmapSize(size int) (int, error) {
 	}
 
 	// Verify the requested size is not above the maximum allowed.
+	// 64位机器上最大是256T
 	if size > maxMapSize {
 		return 0, fmt.Errorf("mmap too large")
 	}
@@ -353,6 +354,7 @@ func (db *DB) mmapSize(size int) (int, error) {
 // init creates a new database file and initializes its meta pages.
 func (db *DB) init() error {
 	// Set the page size to the OS page size.
+	// 默认4KB, 4096Byte
 	db.pageSize = os.Getpagesize()
 
 	/*
@@ -362,6 +364,7 @@ func (db *DB) init() error {
 	*/
 	buf := make([]byte, db.pageSize*4)
 	// Create two meta pages on a buffer.
+	// 头两个页是meta
 	for i := 0; i < 2; i++ {
 		p := db.pageInBuffer(buf[:], pgid(i))
 		p.id = pgid(i)
@@ -380,12 +383,14 @@ func (db *DB) init() error {
 	}
 
 	// Write an empty freelist at page 3.
+	// 第三个页是freelist
 	p := db.pageInBuffer(buf[:], pgid(2))
 	p.id = pgid(2)
 	p.flags = freelistPageFlag
 	p.count = 0
 
 	// Write an empty leaf page at page 4.
+	// 第四个页是leaf
 	p = db.pageInBuffer(buf[:], pgid(3))
 	p.id = pgid(3)
 	p.flags = leafPageFlag
@@ -476,8 +481,10 @@ func (db *DB) close() error {
 // else the database will not reclaim old pages.
 func (db *DB) Begin(writable bool) (*Tx, error) {
 	if writable {
+		// 互斥锁
 		return db.beginRWTx()
 	}
+	// 读锁
 	return db.beginTx()
 }
 
@@ -490,6 +497,7 @@ func (db *DB) beginTx() (*Tx, error) {
 	// Obtain a read-only lock on the mmap. When the mmap is remapped it will
 	// obtain a write lock so all transactions must finish before it can be
 	// remapped.
+	// 会阻塞remmap的写事务
 	db.mmaplock.RLock()
 
 	// Exit if the database is not open yet.
@@ -652,6 +660,7 @@ func (db *DB) View(fn func(*Tx) error) error {
 		return err
 	}
 
+	// 因为是读锁,不是互斥锁,而且只是view操作, 没有数据的提交之类的,所以view事务结束后只需要删除该事务即可
 	if err := t.Rollback(); err != nil {
 		return err
 	}
@@ -814,6 +823,7 @@ func (db *DB) page(id pgid) *page {
 }
 
 // pageInBuffer retrieves a page reference from a given byte array based on the current page size.
+// 给定完整的byte,以及id号,返回这个byte的某个pageSize大小的空间,转成page类型
 func (db *DB) pageInBuffer(b []byte, id pgid) *page {
 	return (*page)(unsafe.Pointer(&b[id*pgid(db.pageSize)]))
 }
