@@ -200,6 +200,7 @@ func (c *Cursor) seek(seek []byte) (key []byte, value []byte, flags uint32) {
 	ref := &c.stack[len(c.stack)-1]
 
 	// If the cursor is pointing to the end of page/node then return nil.
+	// 如果index指向了插入page/node的尾,表明就没有找到相同的,意思就是没找到
 	if ref.index >= ref.count() {
 		return nil, nil, 0
 	}

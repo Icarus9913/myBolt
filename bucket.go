@@ -193,7 +193,7 @@ func (b *Bucket) CreateBucket(key []byte) (*Bucket, error) {
 		rootNode:    &node{isLeaf: true},
 		FillPercent: DefaultFillPercent,
 	}
-	// 拿到bucket对应的value
+	// 一个临时缓冲变量[]byte,保存了bucket的header和数据部分(pageHeader+Data).
 	var value = bucket.write()
 
 	// Insert into node.
