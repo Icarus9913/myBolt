@@ -13,8 +13,8 @@ import (
 	和写事务刚释放的page
 */
 type freelist struct {
-	ids     []pgid          // all free and available free page ids.
-	pending map[txid][]pgid // mapping of soon-to-be free page ids by tx.
+	ids     []pgid          // all free and available free page ids.	所有缓存页ID的排序数组
+	pending map[txid][]pgid // mapping of soon-to-be free page ids by tx.	存储每个事务所缓存的页列表
 	cache   map[pgid]bool   // fast lookup of all free and pending page ids.
 }
 
